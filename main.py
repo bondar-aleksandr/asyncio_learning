@@ -17,6 +17,11 @@ logging.basicConfig(
     datefmt='%H:%M:%S',
 )
 
+
+class RestartFailed(Exception):
+    pass
+
+
 class PubSubMessage:
     def __init__(self, instance_name, message_id):
         self.instance_name = instance_name
@@ -48,7 +53,7 @@ async def publish(queue: asyncio.Queue):
 async def consume(queue: asyncio.Queue):
     while True:
         msg = await queue.get()
-        if random.randrange(1,5) == 3:
+        if random.randrange(1,9) == 3:
             raise Exception(f'Could not consume message {msg}')
         logging.info(f'Consumed {msg}')
         asyncio.create_task(handle_message(msg))
@@ -62,11 +67,20 @@ async def cleanup(msg: PubSubMessage, event: asyncio.Event):
     logging.info(f'Done. Message {msg} acknowledged')
 
 
+def handle_results(results, msg: PubSubMessage):
+    for result in results:
+        if isinstance(result,RestartFailed):
+            logging.error(f'Got RestartFailed exception for {msg.hostname}')
+        if isinstance(result, Exception):
+            logging.error(f'Handle general exception {result}')
+
+
 async def handle_message(msg: PubSubMessage):
     event = asyncio.Event()
     asyncio.create_task(cleanup(msg, event))
     asyncio.create_task(extend(msg, event))
-    await asyncio.gather(restart_host(msg), save(msg))
+    results = await asyncio.gather(restart_host(msg), save(msg), return_exceptions=True)
+    handle_results(results, msg)
     event.set()
 
 
@@ -78,12 +92,16 @@ async def extend(msg: PubSubMessage, event: asyncio.Event):
 
 
 async def restart_host(msg: PubSubMessage):
+    if random.randrange(1,5) == 3:
+        raise RestartFailed(f'Failed to restart host {msg.hostname}')
     await asyncio.sleep(random.random())
     msg.restarted = True
     logging.info(f'Restarted host {msg.hostname}')
 
 
 async def save(msg: PubSubMessage):
+    if random.randrange(1,5) == 3:
+        raise Exception(f'Failed to save {msg}')
     await asyncio.sleep(random.random())
     msg.saved = True
     logging.info(f'Saved message {msg} in database!')
@@ -120,6 +138,7 @@ def main():
     loop.create_task(publish(queue))
     loop.create_task(consume(queue))
     loop.run_forever()
+
 
 if __name__ == '__main__':
     main()
